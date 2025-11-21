@@ -1,0 +1,94 @@
+{
+  "attributes": {
+    "contains_personal_data": {
+      "question": "Does the use case involve personal or consumer-identifiable data? (y/n): ",
+      "type": "bool"
+    },
+    "output_audience": {
+      "question": "Who will see the GenAI output? (internal/external-consumer/external-partner): ",
+      "type": "choice",
+      "options": ["internal", "external-consumer", "external-partner"]
+    },
+    "brand_sensitivity": {
+      "question": "How sensitive is the brand impact for this use case? (low/medium/high): ",
+      "type": "choice",
+      "options": ["low", "medium", "high"]
+    },
+    "domain": {
+      "question": "What is the main domain of the use case? (content/insights/productivity): ",
+      "type": "choice",
+      "options": ["content", "insights", "productivity"]
+    }
+  },
+  "rules": [
+    {
+      "id": "high_risk_personal_external",
+      "conditions": {
+        "contains_personal_data": true,
+        "output_audience": "external-consumer",
+        "brand_sensitivity": "high"
+      },
+      "classification": "high_risk",
+      "explanation": "High brand sensitivity and consumer-visible use of personal data.",
+      "recommended_next_steps": [
+        "Do not proceed as designed.",
+        "Consult legal and data privacy teams.",
+        "Redesign the use case to avoid using personal data directly."
+      ]
+    },
+    {
+      "id": "medium_risk_external_no_personal",
+      "conditions": {
+        "contains_personal_data": false,
+        "output_audience": "external-consumer",
+        "brand_sensitivity": "medium"
+      },
+      "classification": "medium_risk",
+      "explanation": "Consumer-facing content with medium brand sensitivity but no personal data.",
+      "recommended_next_steps": [
+        "Apply strict brand and legal review.",
+        "Require mandatory human approval before publishing.",
+        "Use a curated prompt library and guardrails."
+      ]
+    },
+    {
+      "id": "low_risk_internal_productivity",
+      "conditions": {
+        "contains_personal_data": false,
+        "output_audience": "internal",
+        "domain": "productivity"
+      },
+      "classification": "low_risk",
+      "explanation": "Internal productivity use case without personal data.",
+      "recommended_next_steps": [
+        "Proceed with standard GenAI safeguards.",
+        "Provide user guidance on appropriate inputs.",
+        "Monitor usage and iterate on prompts."
+      ]
+    },
+    {
+      "id": "insights_internal_with_personal",
+      "conditions": {
+        "contains_personal_data": true,
+        "output_audience": "internal",
+        "domain": "insights"
+      },
+      "classification": "medium_risk",
+      "explanation": "Internal insights on personal data require strong governance.",
+      "recommended_next_steps": [
+        "Check that data is properly anonymised or pseudonymised.",
+        "Use an approved secure GenAI environment.",
+        "Limit access to authorised roles and log all queries."
+      ]
+    }
+  ],
+  "default": {
+    "classification": "needs_review",
+    "explanation": "No specific rule matched this combination of answers.",
+    "recommended_next_steps": [
+      "Discuss the use case with the GenAI & Data Commercial Director or governance board.",
+      "Clarify data types, audience and brand sensitivity.",
+      "Update the knowledge base with new rules if needed."
+    ]
+  }
+}
