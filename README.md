@@ -25,3 +25,4 @@ python -m pip install -r requirements.txt
 ```bash
 streamlit run main.py
 ```
+If the command does not automatically open a browser page, the frontend is accessible at `http://localhost:8501`
