@@ -9,5 +9,5 @@ Key responsibilities that are relevant for our knowledge system include:
 - **Defining safeguards and guardrails**, such as when human review is required, which data can or cannot be used, and what kind of GenAI environments are acceptable.
 - **Translating policies and regulations** (for example on privacy and responsible AI) into practical decision rules that non-experts can follow.
 
-Because of this role, the expert has a well-developed set of **rules of thumb** about when a GenAI idea is low-risk, when it is acceptable only with extra safeguards, and when it should be redesigned or rejected. 
-Our knowledge-based system aims to capture a simplified subset of this reasoning in the form of explicit IF–THEN rules, so that internal teams can get an initial assessment of their GenAI ideas before involving the expert directly.
+Because of this role, the expert has a well-developed set of rules of thumb about when a GenAI idea is low-risk, when it is acceptable only with extra safeguards, and when it should be redesigned or rejected. 
+Our knowledge-based system aims to capture a simplified subset of this reasoning in the form of explicit IF–THEN rules, so that internal teams can get an initial assessment of their Generative AI ideas before involving the expert directly.
