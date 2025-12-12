@@ -1,13 +1,27 @@
-# Expert Description
+# Running the GenAI Use Case Risk Advisor
 
-Our expert for this project is the GenAI & Data Commercial Director at Procter & Gamble. In this role, the expert is responsible for guiding how Generative AI and data-driven solutions are used in commercial contexts, such as brand building, marketing, and sales support. The expert works at the intersection of business, technology, and governance.
+To run the system locally, follow these steps:
 
-Key responsibilities that are relevant for our knowledge system include:
+## 1) Clone the repository
+```bash
+git clone git@github.com:AndreiL17/ktp-final-project.git
+cd ktp-final-project
+```
 
-- **Evaluating GenAI use cases** proposed by brand and commercial teams, and judging whether they are appropriate, feasible and compliant.
-- **Balancing business value and risk**, especially in situations that involve consumer data, brand reputation, or public-facing content.
-- **Defining safeguards and guardrails**, such as when human review is required, which data can or cannot be used, and what kind of GenAI environments are acceptable.
-- **Translating policies and regulations** (for example on privacy and responsible AI) into practical decision rules that non-experts can follow.
+## 2) Create and activate a virtual environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate      # macOS / Linux
+.venv\Scripts\activate         # Windows
+```
 
-Because of this role, the expert has a well-developed set of rules of thumb about when a GenAI idea is low-risk, when it is acceptable only with extra safeguards, and when it should be redesigned or rejected. 
-Our knowledge-based system aims to capture a simplified subset of this reasoning in the form of explicit IF–THEN rules, so that internal teams can get an initial assessment of their Generative AI ideas before involving the expert directly.
+## 3) Install the required dependencies
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+## 4) Run the application
+```bash
+streamlit run main.py
+```
