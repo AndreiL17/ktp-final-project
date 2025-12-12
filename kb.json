@@ -1,93 +1,394 @@
 {
   "attributes": {
     "contains_personal_data": {
-      "question": "Does the use case involve personal or consumer-identifiable data? (y/n): ",
+      "question": "Does the use case involve personal or consumer-identifiable data?",
       "type": "bool"
     },
+    "data_sensitivity": {
+      "question": "If data is used, how sensitive is it overall?",
+      "type": "choice",
+      "options": ["none", "low", "medium", "high"]
+    },
     "output_audience": {
-      "question": "Who will see the GenAI output? (internal/external-consumer/external-partner): ",
+      "question": "Who will see the GenAI output?",
       "type": "choice",
       "options": ["internal", "external-consumer", "external-partner"]
     },
     "brand_sensitivity": {
-      "question": "How sensitive is the brand impact for this use case? (low/medium/high): ",
+      "question": "How sensitive is the brand impact for this use case?",
       "type": "choice",
       "options": ["low", "medium", "high"]
     },
     "domain": {
-      "question": "What is the main domain of the use case? (content/insights/productivity): ",
+      "question": "What is the main domain of the use case?",
       "type": "choice",
       "options": ["content", "insights", "productivity"]
+    },
+    "uses_third_party_model": {
+      "question": "Does it use a third-party (non-approved) model/tool outside the company's controlled environment?",
+      "type": "bool"
+    },
+    "human_in_the_loop": {
+      "question": "Will a human review/approve outputs before they are used or published?",
+      "type": "choice",
+      "options": ["none", "optional", "mandatory"]
+    },
+    "automates_decisions": {
+      "question": "Does the system automate decisions that affect customers/employees (e.g., eligibility, targeting, pricing)?",
+      "type": "bool"
+    },
+    "publishing_to_public": {
+      "question": "Will the output be published externally (e.g., public website, social media, ads)?",
+      "type": "bool"
+    },
+    "targets_minors": {
+      "question": "Is the use case likely to involve or target minors (directly or indirectly)?",
+      "type": "bool"
     }
   },
   "rules": [
     {
-      "id": "high_risk_personal_external",
+      "id": "highrisk_personal_public_highbrand",
+      "priority": 10,
       "conditions": {
         "contains_personal_data": true,
-        "output_audience": "external-consumer",
+        "publishing_to_public": true,
         "brand_sensitivity": "high"
       },
       "classification": "high_risk",
-      "explanation": "High brand sensitivity and consumer-visible use of personal data.",
+      "explanation": "Public-facing use with personal data and high brand sensitivity creates high privacy and reputational risk.",
       "recommended_next_steps": [
         "Do not proceed as designed.",
-        "Consult legal and data privacy teams.",
-        "Redesign the use case to avoid using personal data directly."
+        "Consult legal, privacy, and AI governance teams.",
+        "Redesign to remove personal data and reduce exposure."
       ]
     },
     {
-      "id": "medium_risk_external_no_personal",
+      "id": "highrisk_minors_public",
+      "priority": 10,
       "conditions": {
-        "contains_personal_data": false,
-        "output_audience": "external-consumer",
-        "brand_sensitivity": "medium"
+        "targets_minors": true,
+        "publishing_to_public": true
       },
-      "classification": "medium_risk",
-      "explanation": "Consumer-facing content with medium brand sensitivity but no personal data.",
+      "classification": "high_risk",
+      "explanation": "Public-facing GenAI use cases involving minors require strict safeguards and typically trigger high risk classification.",
       "recommended_next_steps": [
-        "Apply strict brand and legal review.",
-        "Require mandatory human approval before publishing.",
-        "Use a curated prompt library and guardrails."
+        "Do not proceed without governance approval.",
+        "Conduct child-safety and privacy review.",
+        "Consider redesign or alternative approach."
       ]
     },
     {
-      "id": "low_risk_internal_productivity",
+      "id": "highrisk_automated_decisions_external",
+      "priority": 10,
       "conditions": {
-        "contains_personal_data": false,
-        "output_audience": "internal",
-        "domain": "productivity"
+        "automates_decisions": true,
+        "output_audience": "external-consumer"
       },
-      "classification": "low_risk",
-      "explanation": "Internal productivity use case without personal data.",
+      "classification": "high_risk",
+      "explanation": "Automated decisions affecting consumers are high-stakes and require strict governance and validation.",
       "recommended_next_steps": [
-        "Proceed with standard GenAI safeguards.",
-        "Provide user guidance on appropriate inputs.",
-        "Monitor usage and iterate on prompts."
+        "Do not deploy without formal governance approval.",
+        "Perform bias, fairness, and robustness testing.",
+        "Ensure explainability and appeal/escalation processes."
       ]
     },
     {
-      "id": "insights_internal_with_personal",
+      "id": "highrisk_personal_thirdparty_model",
+      "priority": 10,
+      "conditions": {
+        "contains_personal_data": true,
+        "uses_third_party_model": true
+      },
+      "classification": "high_risk",
+      "explanation": "Using personal data with a non-approved third-party model/tool increases privacy and compliance risk.",
+      "recommended_next_steps": [
+        "Do not proceed as designed.",
+        "Move to an approved secure environment.",
+        "Minimise, anonymise, or remove personal data."
+      ]
+    },
+
+    {
+      "id": "mediumrisk_personal_internal_insights_mandatory_review",
+      "priority": 7,
       "conditions": {
         "contains_personal_data": true,
         "output_audience": "internal",
-        "domain": "insights"
+        "domain": "insights",
+        "human_in_the_loop": "mandatory"
       },
       "classification": "medium_risk",
-      "explanation": "Internal insights on personal data require strong governance.",
+      "explanation": "Internal insights with personal data can be acceptable with strong governance and mandatory review.",
       "recommended_next_steps": [
-        "Check that data is properly anonymised or pseudonymised.",
-        "Use an approved secure GenAI environment.",
-        "Limit access to authorised roles and log all queries."
+        "Ensure data is anonymised or pseudonymised where possible.",
+        "Use an approved secure environment.",
+        "Log access and restrict to authorised roles."
+      ]
+    },
+    {
+      "id": "mediumrisk_personal_internal_productivity_mandatory_review",
+      "priority": 7,
+      "conditions": {
+        "contains_personal_data": true,
+        "output_audience": "internal",
+        "domain": "productivity",
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "medium_risk",
+      "explanation": "Internal productivity with personal data requires strong controls even if not public-facing.",
+      "recommended_next_steps": [
+        "Minimise personal data usage.",
+        "Use approved tooling and secure environment.",
+        "Restrict access and apply monitoring."
+      ]
+    },
+    {
+      "id": "mediumrisk_external_content_mediumbrand_mandatory_review",
+      "priority": 7,
+      "conditions": {
+        "output_audience": "external-consumer",
+        "domain": "content",
+        "brand_sensitivity": "medium",
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "medium_risk",
+      "explanation": "Consumer-facing content with medium brand sensitivity is acceptable with mandatory review and guardrails.",
+      "recommended_next_steps": [
+        "Apply brand/legal review process.",
+        "Use a curated prompt library and guardrails.",
+        "Require human approval before publishing."
+      ]
+    },
+    {
+      "id": "mediumrisk_external_content_highbrand_mandatory_review",
+      "priority": 8,
+      "conditions": {
+        "output_audience": "external-consumer",
+        "domain": "content",
+        "brand_sensitivity": "high",
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "medium_risk",
+      "explanation": "High-sensitivity brand content can be acceptable if review is mandatory and safeguards are strong.",
+      "recommended_next_steps": [
+        "Mandatory review by brand owner and legal.",
+        "Strict prompt governance and model constraints.",
+        "Maintain audit trail of approvals."
+      ]
+    },
+    {
+      "id": "mediumrisk_external_partner_no_personal",
+      "priority": 6,
+      "conditions": {
+        "output_audience": "external-partner",
+        "contains_personal_data": false,
+        "brand_sensitivity": "medium"
+      },
+      "classification": "medium_risk",
+      "explanation": "Partner-visible output can be medium risk due to contractual and reputational considerations.",
+      "recommended_next_steps": [
+        "Ensure partner communications are reviewed.",
+        "Align with legal/contract requirements.",
+        "Avoid sensitive internal data exposure."
+      ]
+    },
+
+    {
+      "id": "lowrisk_internal_productivity_no_personal_lowdata",
+      "priority": 5,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "productivity",
+        "contains_personal_data": false,
+        "data_sensitivity": "low"
+      },
+      "classification": "low_risk",
+      "explanation": "Internal productivity use with no personal data and low sensitivity is generally low risk.",
+      "recommended_next_steps": [
+        "Proceed with standard safeguards.",
+        "Provide usage guidance and training.",
+        "Monitor and iterate on prompts."
+      ]
+    },
+    {
+      "id": "lowrisk_internal_productivity_no_personal_none",
+      "priority": 5,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "productivity",
+        "contains_personal_data": false,
+        "data_sensitivity": "none"
+      },
+      "classification": "low_risk",
+      "explanation": "Internal productivity with no data or personal data is low risk.",
+      "recommended_next_steps": [
+        "Proceed with standard safeguards.",
+        "Avoid uploading confidential information.",
+        "Monitor usage and collect feedback."
+      ]
+    },
+    {
+      "id": "lowrisk_internal_content_lowbrand_mandatory_review",
+      "priority": 4,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "content",
+        "brand_sensitivity": "low",
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "low_risk",
+      "explanation": "Internal-only content generation with review and low brand sensitivity is low risk.",
+      "recommended_next_steps": [
+        "Proceed with internal review standards.",
+        "Use templates and prompt guidance.",
+        "Store outputs in approved systems."
+      ]
+    },
+
+    {
+      "id": "highrisk_external_content_highbrand_no_review",
+      "priority": 9,
+      "conditions": {
+        "output_audience": "external-consumer",
+        "domain": "content",
+        "brand_sensitivity": "high",
+        "human_in_the_loop": "none"
+      },
+      "classification": "high_risk",
+      "explanation": "High-sensitivity consumer content without human review creates high reputational and compliance risk.",
+      "recommended_next_steps": [
+        "Do not publish without mandatory human review.",
+        "Add guardrails and approval workflow.",
+        "Consider limiting scope or redesign."
+      ]
+    },
+    {
+      "id": "highrisk_external_content_mediumbrand_no_review",
+      "priority": 8,
+      "conditions": {
+        "output_audience": "external-consumer",
+        "domain": "content",
+        "brand_sensitivity": "medium",
+        "human_in_the_loop": "none"
+      },
+      "classification": "high_risk",
+      "explanation": "Consumer-facing content without human review is not acceptable under typical brand governance.",
+      "recommended_next_steps": [
+        "Require mandatory review before publishing.",
+        "Add guardrails and prompt constraints.",
+        "Apply legal/brand checks."
+      ]
+    },
+
+    {
+      "id": "mediumrisk_internal_insights_mediumdata_no_personal",
+      "priority": 6,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "insights",
+        "contains_personal_data": false,
+        "data_sensitivity": "medium"
+      },
+      "classification": "medium_risk",
+      "explanation": "Even without personal data, medium sensitivity internal insights require governance (e.g., competitive/confidential info).",
+      "recommended_next_steps": [
+        "Confirm data classification and access controls.",
+        "Use an approved secure environment.",
+        "Log usage and restrict distribution."
+      ]
+    },
+    {
+      "id": "highrisk_internal_insights_highdata",
+      "priority": 9,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "insights",
+        "data_sensitivity": "high"
+      },
+      "classification": "high_risk",
+      "explanation": "High-sensitivity internal insights (even without explicit personal data) can create major business risk.",
+      "recommended_next_steps": [
+        "Require governance approval and strict access control.",
+        "Use secure environment with auditing.",
+        "Limit outputs to aggregated summaries."
+      ]
+    },
+
+    {
+      "id": "mediumrisk_thirdparty_model_no_personal_internal",
+      "priority": 6,
+      "conditions": {
+        "uses_third_party_model": true,
+        "output_audience": "internal",
+        "contains_personal_data": false
+      },
+      "classification": "medium_risk",
+      "explanation": "Non-approved tools can create security/compliance risk even without personal data.",
+      "recommended_next_steps": [
+        "Prefer approved tools and environments.",
+        "Do not upload confidential information.",
+        "Consult governance if persistent need."
+      ]
+    },
+    {
+      "id": "highrisk_thirdparty_model_public",
+      "priority": 9,
+      "conditions": {
+        "uses_third_party_model": true,
+        "publishing_to_public": true
+      },
+      "classification": "high_risk",
+      "explanation": "Publishing externally using non-approved tools increases legal, IP, and reputational risks.",
+      "recommended_next_steps": [
+        "Move to approved tooling.",
+        "Add mandatory review and traceability.",
+        "Perform legal/IP checks."
+      ]
+    },
+
+    {
+      "id": "lowrisk_internal_productivity_no_personal_mandatory_review",
+      "priority": 4,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "productivity",
+        "contains_personal_data": false,
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "low_risk",
+      "explanation": "Internal productivity with review and no personal data is low risk.",
+      "recommended_next_steps": [
+        "Proceed with standard safeguards.",
+        "Document intended use and limitations.",
+        "Monitor for misuse."
+      ]
+    },
+
+    {
+      "id": "mediumrisk_external_partner_mediumbrand_mandatory_review",
+      "priority": 6,
+      "conditions": {
+        "output_audience": "external-partner",
+        "brand_sensitivity": "medium",
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "medium_risk",
+      "explanation": "Partner-facing outputs can be acceptable with mandatory review and clear controls.",
+      "recommended_next_steps": [
+        "Apply review before sharing.",
+        "Confirm contractual constraints.",
+        "Avoid confidential/internal-only information."
       ]
     }
   ],
   "default": {
+    "id": "default",
     "classification": "needs_review",
     "explanation": "No specific rule matched this combination of answers.",
     "recommended_next_steps": [
       "Discuss the use case with the GenAI & Data Commercial Director or governance board.",
-      "Clarify data types, audience and brand sensitivity.",
+      "Clarify data types, audience, model/tooling, and review process.",
       "Update the knowledge base with new rules if needed."
     ]
   }
