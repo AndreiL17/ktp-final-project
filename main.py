@@ -81,6 +81,8 @@ def init_state(attributes: Dict[str, Any]) -> None:
         st.session_state.step = 0
     if "facts" not in st.session_state:
         st.session_state.facts = {}
+    if "last_result" not in st.session_state:
+        st.session_state.last_result = None  # stores {"rule":..., "facts":...} after eval
 
     # Initialize keys with None so we can evaluate dependencies safely
     for attr_name in attributes.keys():
@@ -90,6 +92,7 @@ def init_state(attributes: Dict[str, Any]) -> None:
 def reset_wizard(attributes: Dict[str, Any]) -> None:
     st.session_state.step = 0
     st.session_state.facts = {k: None for k in attributes.keys()}
+    st.session_state.last_result = None
 
 
 def set_fact(attr_name: str, value: Any) -> None:
@@ -110,7 +113,6 @@ def _depends_on_satisfied(depends_on: Any, facts: Dict[str, Any]) -> bool:
     if not depends_on:
         return True
 
-    # Dict form
     if isinstance(depends_on, dict):
         for k, expected in depends_on.items():
             if k not in facts:
@@ -119,7 +121,6 @@ def _depends_on_satisfied(depends_on: Any, facts: Dict[str, Any]) -> bool:
                 return False
         return True
 
-    # List form (optional)
     if isinstance(depends_on, list):
         for cond in depends_on:
             if not isinstance(cond, dict):
@@ -132,14 +133,12 @@ def _depends_on_satisfied(depends_on: Any, facts: Dict[str, Any]) -> bool:
                 return False
         return True
 
-    # Unknown format -> be conservative
     return False
 
 
 def should_show(attr_name: str, attributes: Dict[str, Any]) -> bool:
     """
     Shows a question unless it has a 'depends_on' condition that isn't met.
-    This makes the UI intuitive and avoids hardcoding any attribute names.
     """
     attr_def = attributes.get(attr_name, {})
     depends_on = attr_def.get("depends_on")
@@ -180,10 +179,7 @@ def render_question(attr_name: str, attr_def: Dict[str, Any]) -> None:
             )
             set_fact(attr_name, val if val != "" else None)
         else:
-            if current in options:
-                idx = options.index(current)
-            else:
-                idx = 0
+            idx = options.index(current) if current in options else 0
             val = st.selectbox(
                 question,
                 options,
@@ -212,7 +208,6 @@ def build_pages_from_kb(attributes: Dict[str, Any], num_pages: int = 3) -> List[
     if not names:
         return [{"title": "Questions", "help": "", "fields": []}]
 
-    # If any attribute has 'page', use that
     has_page = any(isinstance(v, dict) and "page" in v for v in attributes.values())
     if has_page:
         buckets: Dict[int, List[str]] = {}
@@ -221,7 +216,6 @@ def build_pages_from_kb(attributes: Dict[str, Any], num_pages: int = 3) -> List[
             if isinstance(page, int):
                 buckets.setdefault(page, []).append(k)
             else:
-                # Put unpaged items at the end
                 buckets.setdefault(999, []).append(k)
 
         ordered_pages = sorted(buckets.keys())
@@ -238,14 +232,12 @@ def build_pages_from_kb(attributes: Dict[str, Any], num_pages: int = 3) -> List[
             if not fields:
                 continue
             pages.append({
-                "title": titles.get(p, f"Step {len(pages)+1}"),
+                "title": titles.get(p, f"Step {len(pages) + 1}"),
                 "help": helps.get(p, ""),
                 "fields": fields,
             })
-
         return pages
 
-    # Fallback: split evenly by order
     chunk_size = max(1, (len(names) + num_pages - 1) // num_pages)
     chunks = [names[i:i + chunk_size] for i in range(0, len(names), chunk_size)]
     chunks = chunks[:num_pages]
@@ -260,7 +252,7 @@ def build_pages_from_kb(attributes: Dict[str, Any], num_pages: int = 3) -> List[
     pages: List[Dict[str, Any]] = []
     for i, fields in enumerate(chunks):
         pages.append({
-            "title": titles[i] if i < len(titles) else f"Step {i+1}",
+            "title": titles[i] if i < len(titles) else f"Step {i + 1}",
             "help": helps[i] if i < len(helps) else "",
             "fields": fields,
         })
@@ -282,13 +274,12 @@ def facts_for_evaluation(attributes: Dict[str, Any]) -> Dict[str, Any]:
 
 def wizard(attributes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     init_state(attributes)
-
-    # Store attributes in session_state so render_question can check should_show cleanly
     st.session_state.attributes = attributes
 
     steps = build_pages_from_kb(attributes, num_pages=3)
     total_steps = len(steps)
     step_idx = max(0, min(st.session_state.step, total_steps - 1))
+    is_last_step = (step_idx == total_steps - 1)
 
     # Progress + header
     st.progress((step_idx + 1) / total_steps)
@@ -302,32 +293,36 @@ def wizard(attributes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             render_question(attr_name, attr_def)
 
         # Navigation row
-        c1, c2, c3 = st.columns([1, 1, 2])
-
-        with c1:
-            back = st.form_submit_button("Back", disabled=(step_idx == 0))
-
-        with c2:
-            next_btn = st.form_submit_button("Next", disabled=(step_idx == total_steps - 1))
-
-        # Evaluate button ONLY exists on final page
-        evaluate = False
-        with c3:
-            if step_idx == total_steps - 1:
+        # Next button should DISAPPEAR on last step, not just be disabled.
+        if is_last_step:
+            c1, c3 = st.columns([1, 2])
+            with c1:
+                back = st.form_submit_button("Back", disabled=(step_idx == 0))
+            with c3:
                 evaluate = st.form_submit_button("Evaluate use case", type="primary")
+            next_btn = False
+        else:
+            c1, c2, c3 = st.columns([1, 1, 2])
+            with c1:
+                back = st.form_submit_button("Back", disabled=(step_idx == 0))
+            with c2:
+                next_btn = st.form_submit_button("Next")
+            with c3:
+                evaluate = False  # not shown until last step
 
     if back:
         st.session_state.step = max(0, step_idx - 1)
         st.rerun()
 
-    if next_btn:
+    if (not is_last_step) and next_btn:
         st.session_state.step = min(total_steps - 1, step_idx + 1)
         st.rerun()
 
-    if evaluate and step_idx == total_steps - 1:
-        return facts_for_evaluation(attributes)
+    if is_last_step and evaluate:
+        # Store result so reset button can remain visible after evaluation
+        evaluated_facts = facts_for_evaluation(attributes)
+        return evaluated_facts
 
-    st.button("Reset", on_click=reset_wizard, args=(attributes,))
     return None
 
 
@@ -337,6 +332,21 @@ def wizard(attributes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def app() -> None:
     st.set_page_config(page_title="GenAI Use Case Risk Advisor", layout="centered")
+
+    # Slightly widen centered content column (optional, keep if you added it previously)
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            max-width: 900px;
+            padding-left: 2rem;
+            padding-right: 2rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.title("GenAI Use Case Risk Advisor")
     st.write("Answer a few short steps to receive a rule-based risk classification and recommended next steps.")
 
@@ -344,6 +354,10 @@ def app() -> None:
     attributes = kb.get("attributes", {})
 
     facts = wizard(attributes)
+
+    # Always show Reset (even after evaluation)
+    st.button("Reset", on_click=reset_wizard, args=(attributes,))
+
     if facts is not None:
         rule = find_best_rule(kb, facts)
         st.divider()
