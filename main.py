@@ -1,10 +1,92 @@
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import streamlit as st
 
 KB_PATH = Path(__file__).parent / "kb.json"
+
+@dataclass
+class FactValue:
+    value: Any
+    source: str
+
+
+@dataclass
+class UseCase:
+    facts: Dict[str, FactValue] = field(default_factory=dict)
+
+    def get(self, key: str) -> Any:
+        fv = self.facts.get(key)
+        return None if fv is None else fv.value
+
+    def has(self, key: str) -> bool:
+        return key in self.facts and self.facts[key].value is not None
+
+    def set(self, key: str, value: Any, source: str = "user") -> None:
+        if value is None and key in self.facts:
+            return
+        self.facts[key] = FactValue(value=value, source=source)
+
+    def as_plain_dict(self) -> Dict[str, Any]:
+        return {k: v.value for k, v in self.facts.items() if v.value is not None}
+
+    def provenance(self) -> Dict[str, str]:
+        return {k: v.source for k, v in self.facts.items() if v.value is not None}
+
+
+@dataclass(frozen=True)
+class Condition:
+    key: str
+    equals: Any
+
+    def evaluate(self, uc: UseCase) -> Optional[bool]:
+        """True/False if known, None if unknown."""
+        if not uc.has(self.key):
+            return None
+        return uc.get(self.key) == self.equals
+
+
+@dataclass
+class Rule:
+    id: str
+    priority: int
+    conditions: List[Condition]
+
+    asserts: Dict[str, Any] = field(default_factory=dict)
+
+    classification: Optional[str] = None
+    explanation: str = ""
+    recommended_next_steps: List[str] = field(default_factory=list)
+
+    def specificity(self) -> int:
+        return len(self.conditions)
+
+    def status(self, uc: UseCase) -> Tuple[str, Set[str]]:
+        """
+        Returns (status, missing_keys)
+        status ∈ {"satisfied", "contradicted", "undecided"}
+        """
+        missing: Set[str] = set()
+        for c in self.conditions:
+            res = c.evaluate(uc)
+            if res is None:
+                missing.add(c.key)
+            elif res is False:
+                return "contradicted", set()
+        if missing:
+            return "undecided", missing
+        return "satisfied", set()
+
+    def apply(self, uc: UseCase) -> bool:
+        """Apply asserted facts if rule is satisfied. Returns whether anything changed."""
+        changed = False
+        for k, v in self.asserts.items():
+            if not uc.has(k) or uc.get(k) != v:
+                uc.set(k, v, source=self.id)
+                changed = True
+        return changed
 
 
 def load_kb(path: Path = KB_PATH) -> Dict[str, Any]:
@@ -12,50 +94,153 @@ def load_kb(path: Path = KB_PATH) -> Dict[str, Any]:
         return json.load(f)
 
 
-# -------------------------
-# Rules engine (unchanged)
-# -------------------------
-
-def rule_matches(conditions: Dict[str, Any], facts: Dict[str, Any]) -> bool:
-    return all(facts.get(attr) == value for attr, value in conditions.items())
-
-
-def score_rule(rule: Dict[str, Any]) -> Tuple[int, int]:
-    """
-    Scoring: (specificity, priority)
-    - specificity: number of conditions (more conditions = more specific)
-    - priority: optional tie-breaker (higher wins)
-    """
-    conditions = rule.get("conditions", {})
-    specificity = len(conditions)
-    priority = int(rule.get("priority", 0))
-    return specificity, priority
+def parse_rules(raw_rules: List[Dict[str, Any]]) -> List[Rule]:
+    rules: List[Rule] = []
+    for r in raw_rules:
+        conds = [Condition(key=k, equals=v) for k, v in r.get("conditions", {}).items()]
+        rules.append(
+            Rule(
+                id=r.get("id", "unknown"),
+                priority=int(r.get("priority", 0)),
+                conditions=conds,
+                asserts=r.get("asserts", {}) or {},
+                classification=r.get("classification"),
+                explanation=r.get("explanation", ""),
+                recommended_next_steps=r.get("recommended_next_steps", []) or [],
+            )
+        )
+    return rules
 
 
-def find_best_rule(kb: Dict[str, Any], facts: Dict[str, Any]) -> Dict[str, Any]:
-    rules = kb.get("rules", [])
-    best_rule: Optional[Dict[str, Any]] = None
-    best_score = (-1, -1)
+class InferenceEngine:
+    def __init__(self, kb: Dict[str, Any]):
+        self.kb = kb
+        self.attributes: Dict[str, Any] = kb.get("attributes", {})
+        self.derivation_rules = parse_rules(kb.get("derivation_rules", []))
+        self.decision_rules = parse_rules(kb.get("rules", []))
+        self.default = kb.get("default", {"id": "default", "classification": "needs_review"})
 
-    for rule in rules:
-        conditions = rule.get("conditions", {})
-        if rule_matches(conditions, facts):
-            s = score_rule(rule)
-            if s > best_score:
-                best_score = s
-                best_rule = rule
+    def forward_chain(self, uc: UseCase, max_iters: int = 20) -> List[str]:
+        fired: List[str] = []
+        for _ in range(max_iters):
+            changed_any = False
+            for rule in self.derivation_rules:
+                status, _ = rule.status(uc)
+                if status == "satisfied":
+                    changed = rule.apply(uc)
+                    if changed:
+                        fired.append(rule.id)
+                        changed_any = True
+            if not changed_any:
+                break
+        return fired
 
-    if best_rule is None:
-        return kb.get("default", {"id": "default", "classification": "needs_review"})
+    def best_decision(self, uc: UseCase) -> Optional[Rule]:
+        best: Optional[Rule] = None
+        best_score = (-1, -1)
+        for rule in self.decision_rules:
+            status, _ = rule.status(uc)
+            if status == "satisfied":
+                score = (rule.specificity(), rule.priority)
+                if score > best_score:
+                    best_score = score
+                    best = rule
+        return best
 
-    return best_rule
+    def alive_candidates(self, uc: UseCase) -> List[Tuple[Rule, Set[str]]]:
+        candidates: List[Tuple[Rule, Set[str]]] = []
+        for rule in self.decision_rules:
+            status, missing = rule.status(uc)
+            if status == "undecided":
+                candidates.append((rule, missing))
+        candidates.sort(key=lambda rm: (rm[0].priority, rm[0].specificity()), reverse=True)
+        return candidates
+
+    def next_question(self, uc: UseCase, asked: Set[str]) -> Optional[str]:
+        candidates = self.alive_candidates(uc)
+        if not candidates:
+            return None
+
+        top = candidates[: min(5, len(candidates))]
+
+        scores: Dict[str, int] = {}
+        for rule, missing in top:
+            for m in missing:
+                if m in asked:
+                    continue
+
+                attr_def = self.attributes.get(m)
+                if not attr_def:
+                    continue
+
+                if "question" not in attr_def:
+                    continue
+                if attr_def.get("type") == "derived":
+                    continue
+
+                scores[m] = scores.get(m, 0) + (10 + rule.priority)
+
+        if not scores:
+            return None
+
+        return max(scores.items(), key=lambda kv: kv[1])[0]
+
+    def explain_state(self, uc: UseCase) -> Dict[str, Any]:
+        candidates = self.alive_candidates(uc)[:10]
+        return {
+            "known_facts": uc.as_plain_dict(),
+            "provenance": uc.provenance(),
+            "top_candidates": [
+                {
+                    "rule_id": r.id,
+                    "priority": r.priority,
+                    "specificity": r.specificity(),
+                    "missing": sorted(list(missing)),
+                    "conditions": {c.key: c.equals for c in r.conditions},
+                }
+                for r, missing in candidates
+            ],
+        }
 
 
-def show_decision(rule: Dict[str, Any], facts: Dict[str, Any]) -> None:
-    classification = rule.get("classification", "needs_review")
-    explanation = rule.get("explanation", "")
-    steps = rule.get("recommended_next_steps", [])
-    rule_id = rule.get("id", "unknown")
+def render_single_question(attr_name: str, attr_def: Dict[str, Any], current: Any) -> Any:
+    if "question" not in attr_def:
+        st.warning(f"'{attr_name}' is derived and should not be asked.")
+        return None
+
+    q_type = attr_def.get("type", "text")
+    question = attr_def.get("question", attr_name)
+
+    if q_type == "bool":
+        options = ["Not sure", "No", "Yes"]
+        if current is True:
+            idx = 2
+        elif current is False:
+            idx = 1
+        else:
+            idx = 0
+        choice = st.radio(question, options, index=idx, horizontal=True)
+        if choice == "Not sure":
+            return None
+        return choice == "Yes"
+
+    if q_type == "choice":
+        options = attr_def.get("options", [])
+        if not options:
+            return st.text_input(question, value="" if current is None else str(current)) or None
+        options2 = ["(Not sure)"] + options
+        idx = 0 if current is None else (options2.index(current) if current in options2 else 0)
+        val = st.selectbox(question, options2, index=idx)
+        return None if val == "(Not sure)" else val
+
+    return st.text_input(question, value="" if current is None else str(current)) or None
+
+
+def show_decision(rule_payload: Dict[str, Any], used_facts: Dict[str, Any]) -> None:
+    classification = rule_payload.get("classification", "needs_review")
+    explanation = rule_payload.get("explanation", "")
+    steps = rule_payload.get("recommended_next_steps", [])
+    rule_id = rule_payload.get("id", "unknown")
 
     st.subheader(f"Risk classification: {classification}")
     if explanation:
@@ -68,300 +253,84 @@ def show_decision(rule: Dict[str, Any], facts: Dict[str, Any]) -> None:
         for step in steps:
             st.markdown(f"- {step}")
 
-    with st.expander("Facts used for this decision"):
-        st.json(facts)
+    with st.expander("Facts used"):
+        st.json(used_facts)
 
 
-# -------------------------
-# Wizard UI (KB-driven)
-# -------------------------
-
-def init_state(attributes: Dict[str, Any]) -> None:
-    if "step" not in st.session_state:
-        st.session_state.step = 0
-    if "facts" not in st.session_state:
-        st.session_state.facts = {}
-    if "last_result" not in st.session_state:
-        st.session_state.last_result = None  # stores {"rule":..., "facts":...} after eval
-
-    # Initialize keys with None so we can evaluate dependencies safely
-    for attr_name in attributes.keys():
-        st.session_state.facts.setdefault(attr_name, None)
+def init_state() -> None:
+    if "uc" not in st.session_state:
+        st.session_state.uc = UseCase()
+    if "asked" not in st.session_state:
+        st.session_state.asked = set()
+    if "last_decision" not in st.session_state:
+        st.session_state.last_decision = None
+    if "trace" not in st.session_state:
+        st.session_state.trace = {}
 
 
-def reset_wizard(attributes: Dict[str, Any]) -> None:
-    st.session_state.step = 0
-    st.session_state.facts = {k: None for k in attributes.keys()}
-    st.session_state.last_result = None
+def reset_all() -> None:
+    st.session_state.uc = UseCase()
+    st.session_state.asked = set()
+    st.session_state.last_decision = None
+    st.session_state.trace = {}
 
-
-def set_fact(attr_name: str, value: Any) -> None:
-    st.session_state.facts[attr_name] = value
-
-
-def get_fact(attr_name: str) -> Any:
-    return st.session_state.facts.get(attr_name)
-
-
-def _depends_on_satisfied(depends_on: Any, facts: Dict[str, Any]) -> bool:
-    """
-    Supports:
-      - depends_on: {"some_key": true, "other_key": "internal"}
-      - depends_on: [{"key":"x","equals":true}, ...]  (optional structure)
-    If depends_on references keys not in facts, treat as NOT satisfied.
-    """
-    if not depends_on:
-        return True
-
-    if isinstance(depends_on, dict):
-        for k, expected in depends_on.items():
-            if k not in facts:
-                return False
-            if facts.get(k) != expected:
-                return False
-        return True
-
-    if isinstance(depends_on, list):
-        for cond in depends_on:
-            if not isinstance(cond, dict):
-                return False
-            k = cond.get("key")
-            expected = cond.get("equals")
-            if not k or k not in facts:
-                return False
-            if facts.get(k) != expected:
-                return False
-        return True
-
-    return False
-
-
-def should_show(attr_name: str, attributes: Dict[str, Any]) -> bool:
-    """
-    Shows a question unless it has a 'depends_on' condition that isn't met.
-    """
-    attr_def = attributes.get(attr_name, {})
-    depends_on = attr_def.get("depends_on")
-    return _depends_on_satisfied(depends_on, st.session_state.facts)
-
-
-def render_question(attr_name: str, attr_def: Dict[str, Any]) -> None:
-    if not should_show(attr_name, st.session_state.attributes):
-        # Clear hidden answers so rules don’t accidentally match stale values
-        set_fact(attr_name, None)
-        return
-
-    q_type = attr_def.get("type", "text")
-    question = attr_def.get("question", attr_name)
-
-    current = get_fact(attr_name)
-
-    if q_type == "bool":
-        options = ["No", "Yes"]
-        idx = 0 if current is None else (1 if current else 0)
-        choice = st.radio(
-            question,
-            options,
-            index=idx,
-            horizontal=True,
-            key=f"ui_{attr_name}_{st.session_state.step}",
-        )
-        set_fact(attr_name, choice == "Yes")
-
-    elif q_type == "choice":
-        options = attr_def.get("options", [])
-        if not options:
-            text_val = "" if current is None else str(current)
-            val = st.text_input(
-                question,
-                value=text_val,
-                key=f"ui_{attr_name}_{st.session_state.step}",
-            )
-            set_fact(attr_name, val if val != "" else None)
-        else:
-            idx = options.index(current) if current in options else 0
-            val = st.selectbox(
-                question,
-                options,
-                index=idx,
-                key=f"ui_{attr_name}_{st.session_state.step}",
-            )
-            set_fact(attr_name, val)
-
-    else:
-        text_val = "" if current is None else str(current)
-        val = st.text_input(
-            question,
-            value=text_val,
-            key=f"ui_{attr_name}_{st.session_state.step}",
-        )
-        set_fact(attr_name, val if val != "" else None)
-
-
-def build_pages_from_kb(attributes: Dict[str, Any], num_pages: int = 3) -> List[Dict[str, Any]]:
-    """
-    Prefer explicit paging if provided in kb.json:
-      attribute: {"page": 1|2|3, ...}
-    Otherwise, split attributes in their natural order into num_pages chunks.
-    """
-    names = list(attributes.keys())
-    if not names:
-        return [{"title": "Questions", "help": "", "fields": []}]
-
-    has_page = any(isinstance(v, dict) and "page" in v for v in attributes.values())
-    if has_page:
-        buckets: Dict[int, List[str]] = {}
-        for k, v in attributes.items():
-            page = v.get("page")
-            if isinstance(page, int):
-                buckets.setdefault(page, []).append(k)
-            else:
-                buckets.setdefault(999, []).append(k)
-
-        ordered_pages = sorted(buckets.keys())
-        pages: List[Dict[str, Any]] = []
-        titles = {1: "Data & audience", 2: "Controls & tooling", 3: "Domain & impact"}
-        helps = {
-            1: "Start with data types and where outputs will be seen.",
-            2: "How the system is used and governed.",
-            3: "What the system does and who it might affect.",
-        }
-
-        for p in ordered_pages:
-            fields = buckets[p]
-            if not fields:
-                continue
-            pages.append({
-                "title": titles.get(p, f"Step {len(pages) + 1}"),
-                "help": helps.get(p, ""),
-                "fields": fields,
-            })
-        return pages
-
-    chunk_size = max(1, (len(names) + num_pages - 1) // num_pages)
-    chunks = [names[i:i + chunk_size] for i in range(0, len(names), chunk_size)]
-    chunks = chunks[:num_pages]
-
-    titles = ["Data & audience", "Controls & tooling", "Domain & impact"]
-    helps = [
-        "Start with data types and where outputs will be seen.",
-        "How the system is used and governed.",
-        "What the system does and who it might affect.",
-    ]
-
-    pages: List[Dict[str, Any]] = []
-    for i, fields in enumerate(chunks):
-        pages.append({
-            "title": titles[i] if i < len(titles) else f"Step {i + 1}",
-            "help": helps[i] if i < len(helps) else "",
-            "fields": fields,
-        })
-    return pages
-
-
-def facts_for_evaluation(attributes: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Keep only values that are currently visible (dependency satisfied) and non-empty.
-    """
-    out: Dict[str, Any] = {}
-    for attr_name in attributes.keys():
-        if should_show(attr_name, attributes):
-            val = get_fact(attr_name)
-            if val is not None and val != "":
-                out[attr_name] = val
-    return out
-
-
-def wizard(attributes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    init_state(attributes)
-    st.session_state.attributes = attributes
-
-    steps = build_pages_from_kb(attributes, num_pages=3)
-    total_steps = len(steps)
-    step_idx = max(0, min(st.session_state.step, total_steps - 1))
-    is_last_step = (step_idx == total_steps - 1)
-
-    # Progress + header
-    st.progress((step_idx + 1) / total_steps)
-    st.subheader(f"Step {step_idx + 1} of {total_steps}: {steps[step_idx]['title']}")
-    if steps[step_idx]["help"]:
-        st.caption(steps[step_idx]["help"])
-
-    with st.form(key=f"step_form_{step_idx}"):
-        for attr_name in steps[step_idx]["fields"]:
-            attr_def = attributes.get(attr_name, {})
-            render_question(attr_name, attr_def)
-
-        # Navigation row
-        # Next button should DISAPPEAR on last step, not just be disabled.
-        if is_last_step:
-            c1, c3 = st.columns([1, 2])
-            with c1:
-                back = st.form_submit_button("Back", disabled=(step_idx == 0))
-            with c3:
-                evaluate = st.form_submit_button("Evaluate use case", type="primary")
-            next_btn = False
-        else:
-            c1, c2, c3 = st.columns([1, 1, 2])
-            with c1:
-                back = st.form_submit_button("Back", disabled=(step_idx == 0))
-            with c2:
-                next_btn = st.form_submit_button("Next")
-            with c3:
-                evaluate = False  # not shown until last step
-
-    if back:
-        st.session_state.step = max(0, step_idx - 1)
-        st.rerun()
-
-    if (not is_last_step) and next_btn:
-        st.session_state.step = min(total_steps - 1, step_idx + 1)
-        st.rerun()
-
-    if is_last_step and evaluate:
-        # Store result so reset button can remain visible after evaluation
-        evaluated_facts = facts_for_evaluation(attributes)
-        return evaluated_facts
-
-    return None
-
-
-# -------------------------
-# App
-# -------------------------
 
 def app() -> None:
     st.set_page_config(page_title="GenAI Use Case Risk Advisor", layout="centered")
 
-    # Slightly widen centered content column (optional, keep if you added it previously)
-    st.markdown(
-        """
-        <style>
-        .block-container {
-            max-width: 900px;
-            padding-left: 2rem;
-            padding-right: 2rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     st.title("GenAI Use Case Risk Advisor")
-    st.write("Answer a few short steps to receive a rule-based risk classification and recommended next steps.")
+    st.write("This version asks only what it needs, using inference (goal-driven questioning).")
 
     kb = load_kb()
-    attributes = kb.get("attributes", {})
+    engine = InferenceEngine(kb)
 
-    facts = wizard(attributes)
+    init_state()
+    uc: UseCase = st.session_state.uc
 
-    # Always show Reset (even after evaluation)
-    st.button("Reset", on_click=reset_wizard, args=(attributes,))
+    # 1) Forward chaining to derive any implied facts (optional but scalable)
+    fired = engine.forward_chain(uc)
 
-    if facts is not None:
-        rule = find_best_rule(kb, facts)
+    # 2) Check if we can already decide
+    best = engine.best_decision(uc)
+    if best:
+        st.session_state.last_decision = {
+            "id": best.id,
+            "classification": best.classification,
+            "explanation": best.explanation,
+            "recommended_next_steps": best.recommended_next_steps,
+        }
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.button("Reset", on_click=reset_all)
+    with c2:
+        if fired:
+            st.caption(f"Derived facts updated by: {', '.join(fired[:3])}" + (" …" if len(fired) > 3 else ""))
+
+    if st.session_state.last_decision is not None:
         st.divider()
-        show_decision(rule, facts)
+        show_decision(st.session_state.last_decision, uc.as_plain_dict())
+        return
+
+    next_attr = engine.next_question(uc, asked=st.session_state.asked)
+
+    if next_attr is None:
+        st.divider()
+        show_decision(engine.default, uc.as_plain_dict())
+        return
+
+    st.subheader("Next question")
+    attr_def = engine.attributes.get(next_attr, {})
+    current = uc.get(next_attr)
+
+    with st.form("answer_form", clear_on_submit=False):
+        answer = render_single_question(next_attr, attr_def, current=current)
+        submitted = st.form_submit_button("Submit")
+
+    if submitted:
+        st.session_state.asked.add(next_attr)
+        uc.set(next_attr, answer, source="user")
+        st.rerun()
 
 
 if __name__ == "__main__":

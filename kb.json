@@ -44,8 +44,125 @@
     "targets_minors": {
       "question": "Is the use case likely to involve or target minors (directly or indirectly)?",
       "type": "bool"
-    }
+    },
+    "is_external": { "type": "derived" },
+    "is_public": { "type": "derived" },
+    "high_data_exposure": { "type": "derived" },
+    "high_brand_exposure": { "type": "derived" },
+    "third_party_risk": { "type": "derived" },
+    "high_stakes": { "type": "derived" }
   },
+
+  "derivation_rules": [
+    {
+      "id": "derive_is_external_consumer",
+      "priority": 1,
+      "conditions": { "output_audience": "external-consumer" },
+      "asserts": { "is_external": true }
+    },
+    {
+      "id": "derive_is_external_partner",
+      "priority": 1,
+      "conditions": { "output_audience": "external-partner" },
+      "asserts": { "is_external": true }
+    },
+    {
+      "id": "derive_is_external_internal",
+      "priority": 1,
+      "conditions": { "output_audience": "internal" },
+      "asserts": { "is_external": false }
+    },
+
+    {
+      "id": "derive_is_public_from_publishing",
+      "priority": 2,
+      "conditions": { "publishing_to_public": true },
+      "asserts": { "is_public": true }
+    },
+    {
+      "id": "derive_is_public_false_when_not_publishing",
+      "priority": 1,
+      "conditions": { "publishing_to_public": false },
+      "asserts": { "is_public": false }
+    },
+
+    {
+      "id": "derive_high_data_exposure_personal_high",
+      "priority": 3,
+      "conditions": { "contains_personal_data": true, "data_sensitivity": "high" },
+      "asserts": { "high_data_exposure": true }
+    },
+    {
+      "id": "derive_high_data_exposure_personal_medium",
+      "priority": 2,
+      "conditions": { "contains_personal_data": true, "data_sensitivity": "medium" },
+      "asserts": { "high_data_exposure": true }
+    },
+    {
+      "id": "derive_high_data_exposure_high_sensitivity_no_personal",
+      "priority": 2,
+      "conditions": { "contains_personal_data": false, "data_sensitivity": "high" },
+      "asserts": { "high_data_exposure": true }
+    },
+    {
+      "id": "derive_high_data_exposure_false_low_or_none",
+      "priority": 1,
+      "conditions": { "data_sensitivity": "low" },
+      "asserts": { "high_data_exposure": false }
+    },
+    {
+      "id": "derive_high_data_exposure_false_none",
+      "priority": 1,
+      "conditions": { "data_sensitivity": "none" },
+      "asserts": { "high_data_exposure": false }
+    },
+
+    {
+      "id": "derive_high_brand_exposure_high",
+      "priority": 2,
+      "conditions": { "brand_sensitivity": "high" },
+      "asserts": { "high_brand_exposure": true }
+    },
+    {
+      "id": "derive_high_brand_exposure_medium",
+      "priority": 1,
+      "conditions": { "brand_sensitivity": "medium" },
+      "asserts": { "high_brand_exposure": false }
+    },
+    {
+      "id": "derive_high_brand_exposure_low",
+      "priority": 1,
+      "conditions": { "brand_sensitivity": "low" },
+      "asserts": { "high_brand_exposure": false }
+    },
+
+    {
+      "id": "derive_third_party_risk_true",
+      "priority": 2,
+      "conditions": { "uses_third_party_model": true },
+      "asserts": { "third_party_risk": true }
+    },
+    {
+      "id": "derive_third_party_risk_false",
+      "priority": 1,
+      "conditions": { "uses_third_party_model": false },
+      "asserts": { "third_party_risk": false }
+    },
+
+    {
+      "id": "derive_high_stakes_from_automated_decisions",
+      "priority": 3,
+      "conditions": { "automates_decisions": true },
+      "asserts": { "high_stakes": true }
+    },
+    {
+      "id": "derive_high_stakes_from_minors",
+      "priority": 3,
+      "conditions": { "targets_minors": true },
+      "asserts": { "high_stakes": true }
+    }
+  ],
+
   "rules": [
     {
       "id": "highrisk_personal_public_highbrand",
@@ -106,6 +223,75 @@
         "Do not proceed as designed.",
         "Move to an approved secure environment.",
         "Minimise, anonymise, or remove personal data."
+      ]
+    },
+
+    {
+      "id": "highrisk_thirdparty_model_public",
+      "priority": 9,
+      "conditions": {
+        "uses_third_party_model": true,
+        "publishing_to_public": true
+      },
+      "classification": "high_risk",
+      "explanation": "Publishing externally using non-approved tools increases legal, IP, and reputational risks.",
+      "recommended_next_steps": [
+        "Move to approved tooling.",
+        "Add mandatory review and traceability.",
+        "Perform legal/IP checks."
+      ]
+    },
+
+    {
+      "id": "highrisk_external_content_highbrand_no_review",
+      "priority": 9,
+      "conditions": {
+        "output_audience": "external-consumer",
+        "domain": "content",
+        "brand_sensitivity": "high",
+        "human_in_the_loop": "none"
+      },
+      "classification": "high_risk",
+      "explanation": "High-sensitivity consumer content without human review creates high reputational and compliance risk.",
+      "recommended_next_steps": [
+        "Do not publish without mandatory human review.",
+        "Add guardrails and approval workflow.",
+        "Consider limiting scope or redesign."
+      ]
+    },
+
+    {
+      "id": "highrisk_external_content_mediumbrand_no_review",
+      "priority": 8,
+      "conditions": {
+        "output_audience": "external-consumer",
+        "domain": "content",
+        "brand_sensitivity": "medium",
+        "human_in_the_loop": "none"
+      },
+      "classification": "high_risk",
+      "explanation": "Consumer-facing content without human review is not acceptable under typical brand governance.",
+      "recommended_next_steps": [
+        "Require mandatory review before publishing.",
+        "Add guardrails and prompt constraints.",
+        "Apply legal/brand checks."
+      ]
+    },
+
+    {
+      "id": "highrisk_internal_insights_highdata",
+      "priority": 9,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "insights",
+        "data_sensitivity": "high"
+      },
+      "classification": "high_risk",
+      "explanation": "High-sensitivity internal insights (even without explicit personal data) can create major business risk.",
+      "recommended_next_steps": [
+        "Require governance approval and strict access control.",
+        "Use secure environment with auditing.",
+        "Limit outputs to aggregated summaries."
       ]
     },
 
@@ -193,6 +379,55 @@
         "Avoid sensitive internal data exposure."
       ]
     },
+    {
+      "id": "mediumrisk_internal_insights_mediumdata_no_personal",
+      "priority": 6,
+      "conditions": {
+        "output_audience": "internal",
+        "domain": "insights",
+        "contains_personal_data": false,
+        "data_sensitivity": "medium"
+      },
+      "classification": "medium_risk",
+      "explanation": "Even without personal data, medium sensitivity internal insights require governance (e.g., competitive/confidential info).",
+      "recommended_next_steps": [
+        "Confirm data classification and access controls.",
+        "Use an approved secure environment.",
+        "Log usage and restrict distribution."
+      ]
+    },
+    {
+      "id": "mediumrisk_thirdparty_model_no_personal_internal",
+      "priority": 6,
+      "conditions": {
+        "uses_third_party_model": true,
+        "output_audience": "internal",
+        "contains_personal_data": false
+      },
+      "classification": "medium_risk",
+      "explanation": "Non-approved tools can create security/compliance risk even without personal data.",
+      "recommended_next_steps": [
+        "Prefer approved tools and environments.",
+        "Do not upload confidential information.",
+        "Consult governance if persistent need."
+      ]
+    },
+    {
+      "id": "mediumrisk_external_partner_mediumbrand_mandatory_review",
+      "priority": 6,
+      "conditions": {
+        "output_audience": "external-partner",
+        "brand_sensitivity": "medium",
+        "human_in_the_loop": "mandatory"
+      },
+      "classification": "medium_risk",
+      "explanation": "Partner-facing outputs can be acceptable with mandatory review and clear controls.",
+      "recommended_next_steps": [
+        "Apply review before sharing.",
+        "Confirm contractual constraints.",
+        "Avoid confidential/internal-only information."
+      ]
+    },
 
     {
       "id": "lowrisk_internal_productivity_no_personal_lowdata",
@@ -245,108 +480,6 @@
         "Store outputs in approved systems."
       ]
     },
-
-    {
-      "id": "highrisk_external_content_highbrand_no_review",
-      "priority": 9,
-      "conditions": {
-        "output_audience": "external-consumer",
-        "domain": "content",
-        "brand_sensitivity": "high",
-        "human_in_the_loop": "none"
-      },
-      "classification": "high_risk",
-      "explanation": "High-sensitivity consumer content without human review creates high reputational and compliance risk.",
-      "recommended_next_steps": [
-        "Do not publish without mandatory human review.",
-        "Add guardrails and approval workflow.",
-        "Consider limiting scope or redesign."
-      ]
-    },
-    {
-      "id": "highrisk_external_content_mediumbrand_no_review",
-      "priority": 8,
-      "conditions": {
-        "output_audience": "external-consumer",
-        "domain": "content",
-        "brand_sensitivity": "medium",
-        "human_in_the_loop": "none"
-      },
-      "classification": "high_risk",
-      "explanation": "Consumer-facing content without human review is not acceptable under typical brand governance.",
-      "recommended_next_steps": [
-        "Require mandatory review before publishing.",
-        "Add guardrails and prompt constraints.",
-        "Apply legal/brand checks."
-      ]
-    },
-
-    {
-      "id": "mediumrisk_internal_insights_mediumdata_no_personal",
-      "priority": 6,
-      "conditions": {
-        "output_audience": "internal",
-        "domain": "insights",
-        "contains_personal_data": false,
-        "data_sensitivity": "medium"
-      },
-      "classification": "medium_risk",
-      "explanation": "Even without personal data, medium sensitivity internal insights require governance (e.g., competitive/confidential info).",
-      "recommended_next_steps": [
-        "Confirm data classification and access controls.",
-        "Use an approved secure environment.",
-        "Log usage and restrict distribution."
-      ]
-    },
-    {
-      "id": "highrisk_internal_insights_highdata",
-      "priority": 9,
-      "conditions": {
-        "output_audience": "internal",
-        "domain": "insights",
-        "data_sensitivity": "high"
-      },
-      "classification": "high_risk",
-      "explanation": "High-sensitivity internal insights (even without explicit personal data) can create major business risk.",
-      "recommended_next_steps": [
-        "Require governance approval and strict access control.",
-        "Use secure environment with auditing.",
-        "Limit outputs to aggregated summaries."
-      ]
-    },
-
-    {
-      "id": "mediumrisk_thirdparty_model_no_personal_internal",
-      "priority": 6,
-      "conditions": {
-        "uses_third_party_model": true,
-        "output_audience": "internal",
-        "contains_personal_data": false
-      },
-      "classification": "medium_risk",
-      "explanation": "Non-approved tools can create security/compliance risk even without personal data.",
-      "recommended_next_steps": [
-        "Prefer approved tools and environments.",
-        "Do not upload confidential information.",
-        "Consult governance if persistent need."
-      ]
-    },
-    {
-      "id": "highrisk_thirdparty_model_public",
-      "priority": 9,
-      "conditions": {
-        "uses_third_party_model": true,
-        "publishing_to_public": true
-      },
-      "classification": "high_risk",
-      "explanation": "Publishing externally using non-approved tools increases legal, IP, and reputational risks.",
-      "recommended_next_steps": [
-        "Move to approved tooling.",
-        "Add mandatory review and traceability.",
-        "Perform legal/IP checks."
-      ]
-    },
-
     {
       "id": "lowrisk_internal_productivity_no_personal_mandatory_review",
       "priority": 4,
@@ -364,28 +497,42 @@
         "Monitor for misuse."
       ]
     },
-
     {
-      "id": "mediumrisk_external_partner_mediumbrand_mandatory_review",
-      "priority": 6,
+      "id": "highrisk_public_and_high_data_exposure",
+      "priority": 9,
       "conditions": {
-        "output_audience": "external-partner",
-        "brand_sensitivity": "medium",
-        "human_in_the_loop": "mandatory"
+        "is_public": true,
+        "high_data_exposure": true
       },
-      "classification": "medium_risk",
-      "explanation": "Partner-facing outputs can be acceptable with mandatory review and clear controls.",
+      "classification": "high_risk",
+      "explanation": "Public output combined with high data exposure (personal or highly sensitive data) is typically high risk.",
       "recommended_next_steps": [
-        "Apply review before sharing.",
-        "Confirm contractual constraints.",
-        "Avoid confidential/internal-only information."
+        "Do not proceed without privacy/legal review.",
+        "Minimise/anonymise data and add strict controls.",
+        "Require mandatory approval workflow and logging."
+      ]
+    },
+    {
+      "id": "highrisk_external_high_stakes",
+      "priority": 9,
+      "conditions": {
+        "is_external": true,
+        "high_stakes": true
+      },
+      "classification": "high_risk",
+      "explanation": "External-facing high-stakes scenarios (e.g., minors or automated decisions) trigger strong governance requirements.",
+      "recommended_next_steps": [
+        "Escalate to governance board for approval.",
+        "Perform safety, bias/fairness, and robustness testing.",
+        "Add human oversight and a clear escalation process."
       ]
     }
   ],
+
   "default": {
     "id": "default",
     "classification": "needs_review",
-    "explanation": "No specific rule matched this combination of answers.",
+    "explanation": "No specific rule matched this combination of answers (or not enough information was provided).",
     "recommended_next_steps": [
       "Discuss the use case with the GenAI & Data Commercial Director or governance board.",
       "Clarify data types, audience, model/tooling, and review process.",
